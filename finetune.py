@@ -1,10 +1,11 @@
 import pandas as pd
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, TrainingArguments, Trainer
 import datasets
 import torch
 import warnings
+from sklearn.metrics import balanced_accuracy_score, precision_recall_fscore_support, accuracy_score, classification_report
 warnings.filterwarnings('ignore')
 
 
@@ -23,7 +24,7 @@ class Config:
     MODEL_VOCAB_FILE_NAME = 'DeBERTa_fine_tuned/vocab.txt'
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    train_size = 0.5
+    train_size = 0.3
     SEED_GLOBAL = 42
     np.random.seed(SEED_GLOBAL)
 
@@ -46,7 +47,7 @@ class EmailDatasetPreprocessor:
     
     def train_test_split(self, df):
         
-        train_dataset = df.sample(frac=Config.train_size, random_state=200).reset_index(drop=True)
+        train_dataset = df.sample(frac=Config.train_size, random_state=Config.SEED_GLOBAL).reset_index(drop=True)
         test_dataset = df.drop(train_dataset.index).reset_index(drop=True)
 
         return train_dataset,test_dataset
@@ -110,8 +111,8 @@ class EmailDatasetPreprocessor:
     def preprocess(self):
         df = pd.read_csv(self.file_path, encoding='utf-8')
         df = df[['Subject','Body', 'Label']]
-        df['ENCODE_CAT'] = df['Label'].apply(lambda x: self.encode_cat(x))
-        df["text_prepared"] = self.fit_hypithesis(df)
+        #df['ENCODE_CAT'] = df['Label'].apply(lambda x: self.encode_cat(x))
+        df["text"] = self.fit_hypithesis(df)
         train_df, test_df = self.train_test_split(df)
         train_df = self.format_nli_trainset(train_df, Config.hypothesis_label_dic, Config.SEED_GLOBAL)
         test_df = self.format_nli_testset(test_df, Config.hypothesis_label_dic)
@@ -125,12 +126,12 @@ class PrepareDataset:
         self.max_len = max_len
     
     def convert_to_dataset(self):
-        columns_to_keep = ["text_prepared", "hypothesis"]
+        columns_to_keep = ["text", "hypothesis", "label"]
         return datasets.DatasetDict({"train" : datasets.Dataset.from_pandas(self.train_df[columns_to_keep]),
                                     "test" : datasets.Dataset.from_pandas(self.test_df[columns_to_keep])})
     
     def tokenize_nli_format(self, examples):
-        return self.tokenizer(examples["text_prepared"], examples["hypothesis"], truncation = True, max_length = self.max_len)
+        return self.tokenizer(examples["text"], examples["hypothesis"], truncation = True, max_length = self.max_len)
     
     def prepareDataset(self):
         dataset = self.convert_to_dataset()
@@ -139,8 +140,6 @@ class PrepareDataset:
     
 class Train:
     def __init__(self, model, tokenizer, dataset, train_df):
-
-        from transformers import TrainingArguments, Trainer
 
         self.model = model
         self.tokenizer = tokenizer
@@ -152,7 +151,7 @@ class Train:
             logging_dir=Config.MODEL_SAVE_FOLDER,
             learning_rate=Config.LEARNING_RATE,
             per_device_train_batch_size=Config.TRAIN_BATCH_SIZE,
-            per_gpu_eval_batch_size=Config.VALID_BATCH_SIZE,
+            per_device_eval_batch_size=Config.VALID_BATCH_SIZE,
             num_train_epochs=Config.EPOCHS,
             warmup_ratio=Config.WARMUP_RATIO,
             weight_decay=Config.WEIGHT_DECAY,
@@ -182,8 +181,6 @@ class Eval:
         
 
     def compute_metrics_nli_binary(self, eval_pred):
-
-        from sklearn.metrics import balanced_accuracy_score, precision_recall_fscore_support, accuracy_score, classification_report
 
         predictions, labels = eval_pred
 
@@ -244,5 +241,7 @@ if __name__ == "__main__":
     print("The overall structure of the pre-processed train and test sets:\n")
     print(dataset)
 
+
     trainer = Train(model,tokenizer,dataset,train_df)
     trainer.Train()
+
