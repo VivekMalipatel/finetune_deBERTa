@@ -1,11 +1,10 @@
 import pandas as pd
 import numpy as np
-from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, TrainingArguments, Trainer
 import datasets
 import torch
 import warnings
-from sklearn.metrics import balanced_accuracy_score, precision_recall_fscore_support, accuracy_score, classification_report
+from sklearn.metrics import balanced_accuracy_score, precision_recall_fscore_support, accuracy_score
 warnings.filterwarnings('ignore')
 
 
@@ -13,23 +12,19 @@ class Config:
     MAX_LEN = 512
     TRAIN_BATCH_SIZE = 4
     VALID_BATCH_SIZE = 4
-    EPOCHS = 2
+    EPOCHS = 5
     LEARNING_RATE = 2e-5
     WARMUP_RATIO = 0.25
     WEIGHT_DECAY = 0.1
-    MODEL_PATH = 'deberta-v3-large-zeroshot-v1.1-all-33'
+    BASE_MODEL_PATH = 'DeBERTa-v3-base-mnli-fever-anli'
     DATA_FILE_PATH = 'preprocessed_emails_underSampled.csv'
-    MODEL_SAVE_FOLDER = "DeBERTa_fine_tuned"
-    MODEL_FILE_NAME = 'DeBERTa_fine_tuned/pytorch_model.bin'
-    MODEL_VOCAB_FILE_NAME = 'DeBERTa_fine_tuned/vocab.txt'
+    LOGS_PATH = 'DeBERTa_base_finetuned_logs'
+    FINETUNED_SAVE_PATH = "DeBERTa_base_finetuned"
+    MODEL_FILE_NAME = '/pytorch_model.bin'
 
-    directory_save_model = f"{MODEL_SAVE_FOLDER}/"
-    model_name_custom = f"{MODEL_PATH}-finetuned"
-    FINETUNED_MODEL_PATH = directory_save_model + model_name_custom
+    device = 'cuda:5' if torch.cuda.is_available() else 'cpu'
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-    train_size = 0.3
+    train_size = 0.8
     SEED_GLOBAL = 42
     np.random.seed(SEED_GLOBAL)
 
@@ -113,9 +108,12 @@ class EmailDatasetPreprocessor:
 
         return df.copy(deep=True)
     
-    def preprocess(self):
+    def read_input_file(self):
         df = pd.read_csv(self.file_path, encoding='utf-8')
-        df = df[['Subject','Body', 'Label']]
+        return df[['Subject','Body', 'Label']]
+    
+    def preprocess(self):
+        df = self.read_input_file()
         #df['ENCODE_CAT'] = df['Label'].apply(lambda x: self.encode_cat(x))
         df["text"] = self.fit_hypithesis(df)
         train_df, test_df = self.train_test_split(df)
@@ -152,8 +150,8 @@ class Train:
         self.train_df = train_df
 
         self.train_args = TrainingArguments(
-            output_dir=Config.MODEL_SAVE_FOLDER,
-            logging_dir=Config.MODEL_SAVE_FOLDER,
+            output_dir=Config.LOGS_PATH,
+            logging_dir=Config.LOGS_PATH,
             learning_rate=Config.LEARNING_RATE,
             per_device_train_batch_size=Config.TRAIN_BATCH_SIZE,
             per_device_eval_batch_size=Config.VALID_BATCH_SIZE,
@@ -181,7 +179,9 @@ class Train:
         self.save_model()
 
     def save_model(self):
-        self.trainer.save_model(output_dir=Config.FINETUNED_MODEL_PATH)
+        self.trainer.model.eval()
+        self.trainer.save_model(output_dir=Config.FINETUNED_SAVE_PATH)
+        torch.save(self.trainer.model, Config.FINETUNED_SAVE_PATH + Config.MODEL_FILE_NAME, _use_new_zipfile_serialization=False)
 
 class Eval:
     def __init__(self, df_train):
@@ -241,8 +241,8 @@ if __name__ == "__main__":
     preprocessor = EmailDatasetPreprocessor(Config.DATA_FILE_PATH)
     train_df, test_df = preprocessor.preprocess()
 
-    tokenizer = AutoTokenizer.from_pretrained(Config.MODEL_PATH, model_max_length = Config.MAX_LEN)
-    model = AutoModelForSequenceClassification.from_pretrained(Config.MODEL_PATH)
+    tokenizer = AutoTokenizer.from_pretrained(Config.BASE_MODEL_PATH, model_max_length = Config.MAX_LEN)
+    model = AutoModelForSequenceClassification.from_pretrained(Config.BASE_MODEL_PATH)
     model.to(Config.device)
 
     dataset = PrepareDataset(train_df, test_df, tokenizer, Config.MAX_LEN).prepareDataset()
