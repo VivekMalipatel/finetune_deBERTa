@@ -12,33 +12,34 @@ class Config:
     MAX_LEN = 512
     TRAIN_BATCH_SIZE = 4
     VALID_BATCH_SIZE = 4
-    EPOCHS = 5
-    LEARNING_RATE = 2e-5
+    EPOCHS = 6
+    LEARNING_RATE = 2e-6
     WARMUP_RATIO = 0.25
     WEIGHT_DECAY = 0.1
-    BASE_MODEL_PATH = 'DeBERTa-v3-base-mnli-fever-anli'
-    DATA_FILE_PATH = 'preprocessed_emails_underSampled.csv'
-    LOGS_PATH = 'DeBERTa_base_finetuned_logs'
-    FINETUNED_SAVE_PATH = "DeBERTa_base_finetuned"
+    BASE_MODEL_PATH = 'deberta-v3-large-zeroshot-v1.1-all-33'
+    DATA_FILE_PATH = 'preprocessed_emails_overSampled.csv'
+    LOGS_PATH = 'DeBERTa_large_finetuned_logs'
+    FINETUNED_SAVE_PATH = "DeBERTa_large_finetuned"
     MODEL_FILE_NAME = '/pytorch_model.bin'
+    VOCAB_FILE_NAME = '/vocab.txt'
 
-    device = 'cuda:5' if torch.cuda.is_available() else 'cpu'
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     train_size = 0.8
     SEED_GLOBAL = 42
     np.random.seed(SEED_GLOBAL)
 
     hypothesis_label_dic = {
-    "Applied": "The email is related to applied job application, for example for email received after applying for any job.",
-    "Rejected": "The email is related to rejected job application, for example for rejection or not considered for the job role email received after applying for any job.",
-    "Irrelevant": "The email is not about the applied job application or any job application",
-    "Accepetd": "The email is related to Accepted job application, for example for email received about being accepted for the role after applying for any job."
+    "Applied": "The email is receipt to a job application that the recipient has submitted, for instance, a confirmation email received after applying for a job.",
+    "Rejected": "The email is related to a rejection from a job application, indicating that the recipient was not selected for the job role or that the application will not be moving forward.",
+    "Irrelevant": "The email is not related to job applications, such as applying, being rejected, or being accepted for a job role. It does not pertain to the status or process of job applications or any job application.",
+    "Accepted": "The email is related to the acceptance of a job application, indicating that the recipient has been selected or considered for a job role following an application."
     }
 
 class EmailDatasetPreprocessor:
     def __init__(self, file_path = None):
         self.file_path = file_path
-        self.encode_dict = {'Rejected': 0, 'Applied': 1, 'Irrelevant': 2, 'Accepted' :3}
+        #self.encode_dict = {'Rejected': 0, 'Applied': 1, 'Irrelevant': 2, 'Accepted' :3}
         
     def encode_cat(self, x):
         if x not in self.encode_dict.keys():
@@ -52,7 +53,7 @@ class EmailDatasetPreprocessor:
 
         return train_dataset,test_dataset
     
-    def fit_hypithesis(self, email):
+    def fit_hypothesis(self, email):
         return email.Subject.fillna("") + '. The email: "' + email.Body.fillna("") + '" -end of the email. '
     
     def format_nli_trainset(self, df, hypo_label_dic, random_seed=42):
@@ -115,7 +116,7 @@ class EmailDatasetPreprocessor:
     def preprocess(self):
         df = self.read_input_file()
         #df['ENCODE_CAT'] = df['Label'].apply(lambda x: self.encode_cat(x))
-        df["text"] = self.fit_hypithesis(df)
+        df["text"] = self.fit_hypothesis(df)
         train_df, test_df = self.train_test_split(df)
         train_df = self.format_nli_trainset(train_df, Config.hypothesis_label_dic, Config.SEED_GLOBAL)
         test_df = self.format_nli_testset(test_df, Config.hypothesis_label_dic)
@@ -163,6 +164,7 @@ class Train:
             metric_for_best_model="f1_macro",
             evaluation_strategy="epoch",
             save_strategy="epoch",
+            save_total_limit = 2,
             report_to="all",
         )
         self.trainer = Trainer(
@@ -182,6 +184,7 @@ class Train:
         self.trainer.model.eval()
         self.trainer.save_model(output_dir=Config.FINETUNED_SAVE_PATH)
         torch.save(self.trainer.model, Config.FINETUNED_SAVE_PATH + Config.MODEL_FILE_NAME, _use_new_zipfile_serialization=False)
+        self.trainer.tokenizer.save_vocabulary(Config.FINETUNED_SAVE_PATH)
 
 class Eval:
     def __init__(self, df_train):
@@ -249,7 +252,6 @@ if __name__ == "__main__":
 
     print("The overall structure of the pre-processed train and test sets:\n")
     print(dataset)
-
 
     trainer = Train(model,tokenizer,dataset,train_df)
     trainer.Train()

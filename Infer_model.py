@@ -4,7 +4,7 @@ import pandas as pd
 from sklearn.metrics import accuracy_score
 
 hypothesis_lst = list(Config.hypothesis_label_dic.values())
-MODEL_PATH = "DeBERTa_large_finetuned"
+MODEL_PATH = "deberta-v3-large-zeroshot-v1.1-all-33"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, model_max_length = Config.MAX_LEN)
 model = AutoModelForSequenceClassification.from_pretrained(MODEL_PATH)
 
@@ -16,13 +16,10 @@ pipe_classifier = pipeline(
     device=Config.device,
 )
 
-#data = {"Subject" : ["Your Seismic Application: Software Engineer Intern - Summer 2024"], "Body": ["Hi Vivekanand Reddy, We appreciate your interest in joining the Seismic team. We know how time consuming it can be searching for a new opportunity, so we really mean it when we say thanks for thinking of us.After reviewing your application, we’ve decided to move forward with other candidates for the Software Engineer Intern - Summer 2024 role."], "Label": ["Rejected"]}
-#df = pd.DataFrame(data)
-
-preprocessor = EmailDatasetPreprocessor("preprocessed_emails.csv")
+preprocessor = EmailDatasetPreprocessor("preprocessed_emails_underSampled.csv")
 
 df = preprocessor.read_input_file()
-df["text"] = preprocessor.fit_hypithesis(df)
+df["text"] = preprocessor.fit_hypothesis(df)
 text_lst = df["text"].tolist()
 
 pipe_output = pipe_classifier(
