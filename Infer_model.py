@@ -1,40 +1,48 @@
-from finetune import TriageDataset,Config, BERTClassifier
-from transformers import BertTokenizer, logging
-from torch.utils.data import DataLoader
-from preprocess_data import EmailPreprocessor
-import torch
+from finetune import Config, EmailDatasetPreprocessor, PrepareDataset
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
 import pandas as pd
-import warnings
 
-warnings.filterwarnings("ignore")
+hypothesis_lst = list(Config.hypothesis_label_dic.values())
+tokenizer = AutoTokenizer.from_pretrained(Config.FINETUNED_MODEL_PATH, model_max_length = Config.MAX_LEN)
+model = AutoModelForSequenceClassification.from_pretrained(Config.FINETUNED_MODEL_PATH)
+model.to(Config.device)
 
-logging.set_verbosity_error()
+pipe_classifier = pipeline(
+    "zero-shot-classification",
+    model=model,  
+    tokenizer=tokenizer,
+    framework="pt",
+    device=Config.device,
+)
 
-Config.BERT_PATH = 'bert_finetuned'
-
-tokenizer = BertTokenizer.from_pretrained(Config.BERT_PATH)
-
-id2label = {0 :'Rejected', 1 :'Applied', 2 :'Irrelevant', 3: 'Accepted'}
-
-data = {"Body": ["Hey Vivekanand Reddy, My name is Marchem Pfeiffer and I'm the student outreach & engagement coordinator for the AI Futures program."], "ENCODE_CAT": [1]}
+data = {"Subject" : ["[Ext] Splunk application update - Software Engineer Intern - Front-end (Boulder, CO - Summer 2024) (28270)"], "Body": ["Hi Vivekanand, Thank you so much for applying to the Software Engineer Intern - Front-end (Boulder, CO - Summer 2024) (28270 position at Splunk. We appreciate your interest and the time you’ve invested.Unfortunately, we have filled this position and will not move forward with your application at this time. If you applied to multiple positions at Splunk, note that you will receive a separate update for each one.We would encourage you to sign up for our job alerts and hope you’ll keep Splunk in mind for future opportunities.While we obviously can’t hire every applicant, we do strive to give every candidate a positive experience and we would love to hear about yours. Would you mind taking this short survey? It should only take a couple of minutes to complete. Your responses are confidential. Splunk will not know the identity of the respondents. Data will be used in aggregate to inform improvements to our processes.We wish you every success in your job search and in all of your professional pursuits.Sincerely,The Splunk Talent Acquisition Team Splunk’s Career Site Privacy Policy explains how we collect, use, store and share your information when you apply for a position at Splunk. This message is intended only for the personal, confidential, and authorized use of the recipient(s) named above. If you are not that person, you are not authorized to review, use, copy, forward, distribute or otherwise disclose the information contained in the message.."], "Label": ["Rejected"]}
 df = pd.DataFrame(data)
-preprocess = EmailPreprocessor()
-df = preprocess.preprocess_dataframe(df)
 
-training_set = TriageDataset(df, tokenizer, Config.MAX_LEN)
+preprocessor = EmailDatasetPreprocessor()
+df["text"] = preprocessor.fit_hypithesis(df)
+df = preprocessor.format_nli_testset(df,Config.hypothesis_label_dic)
+text_lst = df["text"].tolist()
 
-train_params = {'batch_size': Config.TRAIN_BATCH_SIZE, 'shuffle': True, 'num_workers': 0}
+pipe_output = pipe_classifier(
+    text_lst,  # input any list of texts here
+    candidate_labels=hypothesis_lst,
+    hypothesis_template="{}",
+    multi_label=False,  # here you can decide if, for your task, only one hypothesis can be true, or multiple can be true
+    batch_size=4  # reduce this number to 8 or 16 if you get an out-of-memory error
+)
+print(pipe_output)
 
-training_loader = DataLoader(training_set, **train_params)
+hypothesis_pred_true_probability = []
+hypothesis_pred_true = []
+for dic in pipe_output:
+    hypothesis_pred_true_probability.append(dic["scores"][0])
+    hypothesis_pred_true.append(dic["labels"][0])
 
-model = BERTClassifier().to(Config.device)
-model.eval()
+# map the long hypotheses to their corresponding short label names
+hypothesis_label_dic_inference_inverted = {value: key for key, value in Config.hypothesis_label_dic.items()}
+label_pred = [hypothesis_label_dic_inference_inverted[hypo] for hypo in hypothesis_pred_true]
 
-for _ in range(0,10):
-    for _, data in enumerate(training_loader, 0):
-        ids = data['ids'].to(Config.device, dtype=torch.long)
-        mask = data['mask'].to(Config.device, dtype=torch.long)
-        token_type_ids = data['token_type_ids'].to(Config.device, dtype=torch.long)
-        outputs = model(ids, mask, token_type_ids)
-        big_val, big_idx = torch.max(outputs.data, dim=1)
-        print(id2label[big_idx[0].item()])
+df["label_text_pred"] = label_pred
+df["label_text_pred_proba"] = hypothesis_pred_true_probability
+
+print(df)

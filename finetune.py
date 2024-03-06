@@ -18,10 +18,15 @@ class Config:
     WARMUP_RATIO = 0.25
     WEIGHT_DECAY = 0.1
     MODEL_PATH = 'deberta-v3-large-zeroshot-v1.1-all-33'
-    DATA_FILE_PATH = 'preprocessed_emails_overSampled.csv'
+    DATA_FILE_PATH = 'preprocessed_emails_underSampled.csv'
     MODEL_SAVE_FOLDER = "DeBERTa_fine_tuned"
     MODEL_FILE_NAME = 'DeBERTa_fine_tuned/pytorch_model.bin'
     MODEL_VOCAB_FILE_NAME = 'DeBERTa_fine_tuned/vocab.txt'
+
+    directory_save_model = f"{MODEL_SAVE_FOLDER}/"
+    model_name_custom = f"{MODEL_PATH}-finetuned"
+    FINETUNED_MODEL_PATH = directory_save_model + model_name_custom
+
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     train_size = 0.3
@@ -36,7 +41,7 @@ class Config:
     }
 
 class EmailDatasetPreprocessor:
-    def __init__(self, file_path):
+    def __init__(self, file_path = None):
         self.file_path = file_path
         self.encode_dict = {'Rejected': 0, 'Applied': 1, 'Irrelevant': 2, 'Accepted' :3}
         
@@ -173,6 +178,10 @@ class Train:
 
     def Train(self):
         self.trainer.train()
+        self.save_model()
+
+    def save_model(self):
+        self.trainer.save_model(output_dir=Config.FINETUNED_MODEL_PATH)
 
 class Eval:
     def __init__(self, df_train):
