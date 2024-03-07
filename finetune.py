@@ -6,16 +6,13 @@ import torch
 import warnings
 from sklearn.metrics import balanced_accuracy_score, precision_recall_fscore_support, accuracy_score
 warnings.filterwarnings('ignore')
+import os
+
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 
 class Config:
-    MAX_LEN = 512
-    TRAIN_BATCH_SIZE = 4
-    VALID_BATCH_SIZE = 4
-    EPOCHS = 6
-    LEARNING_RATE = 2e-6
-    WARMUP_RATIO = 0.25
-    WEIGHT_DECAY = 0.1
+
     BASE_MODEL_PATH = 'deberta-v3-large-zeroshot-v1.1-all-33'
     DATA_FILE_PATH = 'preprocessed_emails_overSampled.csv'
     LOGS_PATH = 'DeBERTa_large_finetuned_logs'
@@ -23,17 +20,28 @@ class Config:
     MODEL_FILE_NAME = '/pytorch_model.bin'
     VOCAB_FILE_NAME = '/vocab.txt'
 
+    MAX_LEN = 512
+    TRAIN_BATCH_SIZE = 4 if "large" in BASE_MODEL_PATH else 8
+    VALID_BATCH_SIZE = 64 if "large" in BASE_MODEL_PATH else 64*2
+    EPOCHS = 3
+    LEARNING_RATE = 9e-6 if "large" in BASE_MODEL_PATH else 2e-5
+    WARMUP_RATIO = 0.06
+    WEIGHT_DECAY = 0.01
+    GRADIENT_ACCUMULATION_STEPS = 4 if "large" in BASE_MODEL_PATH else 1
+    FP16_BOOL = True if torch.cuda.is_available() else False
+
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    train_size = 0.8
+    train_size = 0.3
     SEED_GLOBAL = 42
     np.random.seed(SEED_GLOBAL)
+    torch.manual_seed(SEED_GLOBAL)
 
     hypothesis_label_dic = {
-    "Applied": "The email is receipt to a job application that the recipient has submitted, for instance, a confirmation email received after applying for a job.",
+    "Applied": "The email is related to a job application that the recipient has submitted, for instance, a confirmation email received after applying for a job.",
     "Rejected": "The email is related to a rejection from a job application, indicating that the recipient was not selected for the job role or that the application will not be moving forward.",
-    "Irrelevant": "The email is not related to job applications, such as applying, being rejected, or being accepted for a job role. It does not pertain to the status or process of job applications or any job application.",
-    "Accepted": "The email is related to the acceptance of a job application, indicating that the recipient has been selected or considered for a job role following an application."
+    "Irrelevant": "The email is not related to job applications, such as applying, being rejected, or being accepted for a job role. It does not pertain to the status or process of job applications.",
+    "Accepted": "The email is related to the acceptance of a job application, indicating that the recipient has not just applied but been selected or accepted for a job role following an application."
     }
 
 class EmailDatasetPreprocessor:
@@ -154,11 +162,15 @@ class Train:
             output_dir=Config.LOGS_PATH,
             logging_dir=Config.LOGS_PATH,
             learning_rate=Config.LEARNING_RATE,
+            lr_scheduler_type= "linear",
+            group_by_length=False, 
+            gradient_accumulation_steps=Config.GRADIENT_ACCUMULATION_STEPS,
             per_device_train_batch_size=Config.TRAIN_BATCH_SIZE,
             per_device_eval_batch_size=Config.VALID_BATCH_SIZE,
             num_train_epochs=Config.EPOCHS,
             warmup_ratio=Config.WARMUP_RATIO,
             weight_decay=Config.WEIGHT_DECAY,
+            fp16=Config.FP16_BOOL, 
             seed = Config.SEED_GLOBAL,
             load_best_model_at_end= True,
             metric_for_best_model="f1_macro",
