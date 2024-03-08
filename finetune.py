@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, TrainingArguments, Trainer
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, TrainingArguments, Trainer, AutoConfig, __version__
 import datasets
 import torch
 import warnings
@@ -13,12 +13,15 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 class Config:
 
-    BASE_MODEL_PATH = 'deberta-v3-large-zeroshot-v1.1-all-33'
+    TRANSFORMER_VERSION = __version__
+
+    BASE_MODEL_PATH = 'deberta-v3-xsmall-zeroshot-v1.1-all-33'
     DATA_FILE_PATH = 'preprocessed_emails_overSampled.csv'
-    LOGS_PATH = 'DeBERTa_large_finetuned_logs'
-    FINETUNED_SAVE_PATH = "DeBERTa_large_finetuned"
+    LOGS_PATH = 'DeBERTa_xsmall_finetuned_logs'
+    FINETUNED_SAVE_PATH = "applicationTracker_DeBERTa_v3_xsmall_finetuned"
     MODEL_FILE_NAME = '/pytorch_model.bin'
     VOCAB_FILE_NAME = '/vocab.txt'
+    OUTPUT_MODEL_NAME = FINETUNED_SAVE_PATH
 
     MAX_LEN = 512
     TRAIN_BATCH_SIZE = 4 if "large" in BASE_MODEL_PATH else 8
@@ -28,11 +31,12 @@ class Config:
     WARMUP_RATIO = 0.06
     WEIGHT_DECAY = 0.01
     GRADIENT_ACCUMULATION_STEPS = 4 if "large" in BASE_MODEL_PATH else 1
+    MODEL_TORCH_D_TYPE = "float16"
     FP16_BOOL = True if torch.cuda.is_available() else False
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    train_size = 0.3
+    train_size = 0.2
     SEED_GLOBAL = 42
     np.random.seed(SEED_GLOBAL)
     torch.manual_seed(SEED_GLOBAL)
@@ -143,7 +147,7 @@ class PrepareDataset:
                                     "test" : datasets.Dataset.from_pandas(self.test_df[columns_to_keep])})
     
     def tokenize_nli_format(self, examples):
-        return self.tokenizer(examples["text"], examples["hypothesis"], truncation = True, max_length = self.max_len)
+        return self.tokenizer(examples["text"], examples["hypothesis"], padding=True, truncation = True, max_length = self.max_len, return_tensors="pt")
     
     def prepareDataset(self):
         dataset = self.convert_to_dataset()
@@ -185,7 +189,7 @@ class Train:
             args = self.train_args,
             train_dataset = self.dattaset["train"],
             eval_dataset = self.dattaset["test"],
-            compute_metrics = lambda eval_pred : Eval(self.train_df).compute_metrics_nli_binary(eval_pred)
+            compute_metrics = lambda eval_pred : Eval(self.train_df).compute_metrics_nli_binary(eval_pred),
         )
 
     def Train(self):
@@ -193,7 +197,10 @@ class Train:
         self.save_model()
 
     def save_model(self):
-        self.trainer.model.eval()
+        model.config._name_or_path = Config.OUTPUT_MODEL_NAME
+        self.trainer.model.config._name_or_path = Config.OUTPUT_MODEL_NAME
+        self.trainer.model.config.transformers_version = Config.TRANSFORMER_VERSION
+        self.trainer.model.config.torch_dtype = Config.MODEL_TORCH_D_TYPE
         self.trainer.save_model(output_dir=Config.FINETUNED_SAVE_PATH)
         torch.save(self.trainer.model, Config.FINETUNED_SAVE_PATH + Config.MODEL_FILE_NAME, _use_new_zipfile_serialization=False)
         self.trainer.tokenizer.save_vocabulary(Config.FINETUNED_SAVE_PATH)
@@ -257,8 +264,12 @@ if __name__ == "__main__":
     train_df, test_df = preprocessor.preprocess()
 
     tokenizer = AutoTokenizer.from_pretrained(Config.BASE_MODEL_PATH, model_max_length = Config.MAX_LEN)
-    model = AutoModelForSequenceClassification.from_pretrained(Config.BASE_MODEL_PATH)
+
+    model_config = AutoConfig.from_pretrained(Config.BASE_MODEL_PATH)
+    model = AutoModelForSequenceClassification.from_pretrained(Config.BASE_MODEL_PATH, config = model_config)
     model.to(Config.device)
+    model.config.transformers_version = Config.TRANSFORMER_VERSION
+    Config.MODEL_TORCH_D_TYPE = model_config.torch_dtype
 
     dataset = PrepareDataset(train_df, test_df, tokenizer, Config.MAX_LEN).prepareDataset()
 
